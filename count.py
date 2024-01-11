@@ -11,6 +11,10 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import ImageTk, Image
 
+DISPLAY_EXTERNAL_IMAGE = False
+STICKER_MAX_SIZE = 100
+
+
 class ObjectDetectionApp:
     def __init__(self, master):
         self.master = master
@@ -20,24 +24,46 @@ class ObjectDetectionApp:
             os.mkdir("output/")
 
         self.model = YOLO("yolov8n.pt")
-        self.video_source = filedialog.askopenfilename(title="Select Video File", filetypes=[("Video files", "*.mp4")])
+        self.video_source = filedialog.askopenfilename(
+            title="Select Video File", filetypes=[("Video files", "*.mp4")]
+        )
         self.capture = cv2.VideoCapture(self.video_source)
         # capture = cv2.VideoCapture(0) # to use camera
         assert self.capture.isOpened(), "Error reading video file"
         self.w, self.h, self.fps = (
             int(self.capture.get(x))
-            for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS)
+            for x in (
+                cv2.CAP_PROP_FRAME_WIDTH,
+                cv2.CAP_PROP_FRAME_HEIGHT,
+                cv2.CAP_PROP_FPS,
+            )
         )
 
         # Canvas for displaying the image
-        self.canvas = tk.Canvas(self.master, width=int(self.w/2), height=int(self.h/2))
-        self.canvas.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
+        self.canvas = tk.Canvas(
+            self.master, width=int(self.w / 2), height=int(self.h / 2)
+        )
+        self.canvas.grid(row=0, column=0, rowspan=3, padx=10, pady=10)
 
-        self.total_cars_label = tk.Label(self.master, text="Total number of cars: 0")
-        self.total_cars_label.grid(row=0, column=1, padx=10, pady=10)
+        StickerGroup = tk.Frame(self.master)
+        StickerGroup.grid(row=0, column=1, pady=1)
 
-        self.stickered_cars_label = tk.Label(self.master, text="Total number of cars with stickers: 0")
-        self.stickered_cars_label.grid(row=1, column=1, padx=10, pady=10)
+        sticker_label = tk.Label(StickerGroup, text="Possible UP Sticker:")
+        sticker_label.pack(side=tk.TOP)
+
+        self.sticker = tk.Canvas(StickerGroup, height=STICKER_MAX_SIZE)
+        self.sticker.pack(side=tk.BOTTOM)
+
+        DataGroup = tk.Frame(self.master)
+        DataGroup.grid(row=1, column=1, pady=1)
+
+        self.total_cars_label = tk.Label(DataGroup, text="Total number of cars: 0")
+        self.total_cars_label.pack(side=tk.TOP, pady=1)
+
+        self.stickered_cars_label = tk.Label(
+            DataGroup, text="Total number of cars with stickers: 0"
+        )
+        self.stickered_cars_label.pack(side=tk.BOTTOM, pady=1)
 
         # Buttons and labels on the right
         self.quit_button = tk.Button(self.master, text="Quit", command=self.quit)
@@ -49,10 +75,10 @@ class ObjectDetectionApp:
         self.detection_thread.start()
 
     def start_detection(self):
-        
         # REGION_POINTS = [(900, 0), (950, 0), (950, 1080), (900, 1080)]  # line or region points
         # sets the region where detection will occur
-        LEFTREGION = self.w // 2 + 100
+        SHIFT = 100
+        LEFTREGION = self.w // 2 + SHIFT
         RIGHTREGION = LEFTREGION + 50
         REGION_POINTS = [
             (LEFTREGION, 0),
@@ -64,11 +90,21 @@ class ObjectDetectionApp:
         CLASSES_TO_COUNT = [2]  # selects car classes
 
         # initialize the video writer
-        self.video_writer = cv2.VideoWriter("object_counting_output.avi", cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (self.w, self.h))
+        self.video_writer = cv2.VideoWriter(
+            "object_counting_output.avi",
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            self.fps,
+            (self.w, self.h),
+        )
 
         # initialize the object Counter
         counter = object_counter.ObjectCounter()
-        counter.set_args(view_img=False, reg_pts=REGION_POINTS, classes_names=self.model.names, draw_tracks=True)
+        counter.set_args(
+            view_img=False,
+            reg_pts=REGION_POINTS,
+            classes_names=self.model.names,
+            draw_tracks=True,
+        )
 
         stickered_car_counter = 0
         car_counter = 0
@@ -77,26 +113,39 @@ class ObjectDetectionApp:
         while True and self.capture.isOpened():
             success, input_img = self.capture.read()
             if not success:
-                print("Video frame is empty or video processing has been successfully completed.")
+                print(
+                    "Video frame is empty or video processing has been successfully completed."
+                )
+                tk.messagebox.showinfo(title=None, message="Video frame is empty or video processing has been successfully completed.",)
                 break
 
             # perform object tracking on the input image
-            tracks = self.model.track(input_img, persist=True, show=False, classes=CLASSES_TO_COUNT, verbose=False)
+            tracks = self.model.track(
+                input_img,
+                persist=True,
+                show=False,
+                classes=CLASSES_TO_COUNT,
+                verbose=False,
+            )
 
             counted_image = counter.start_counting(input_img, tracks)
 
             # if no car was detected in the image
             if counted_image is None:
-                cv2.imshow("MainImage", input_img)
+                if DISPLAY_EXTERNAL_IMAGE:
+                    cv2.imshow("MainImage", input_img)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        self.quit()
+
                 self.update_pics(input_img)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    self.quit()
                 continue
 
             # if a car is detected
             if car_counter < counter.out_counts:
                 car_counter += 1
-                cv2.imwrite(f"output/car_{car_counter}.jpg", counted_image)  # saves the image containing the car
+                cv2.imwrite(
+                    f"output/car_{car_counter}.jpg", counted_image
+                )  # saves the image containing the car
                 mask = StickerMask(input_img)  # applies a red and yellow mask
                 result = StickerResult(input_img, mask)
 
@@ -105,34 +154,59 @@ class ObjectDetectionApp:
                 possibleStickers = detectShape(result, mask, car_counter)
                 if len(possibleStickers) > 0:
                     stickered_car_counter += 1
+                    self.update_sticker(possibleStickers[0][4])
 
                 if True:
                     print("Cars detected:", car_counter)
                     print("Cars with stickers:", stickered_car_counter)
                     print()
-                    self.total_cars_label.config(text=f"Total number of cars: {car_counter}")
-                    self.stickered_cars_label.config(text=f"Total number of cars with stickers: {stickered_car_counter}")
+                    self.total_cars_label.config(
+                        text=f"Total number of cars: {car_counter}"
+                    )
+                    self.stickered_cars_label.config(
+                        text=f"Total number of cars with stickers: {stickered_car_counter}"
+                    )
 
-            cv2.imshow("MainImage", counted_image)
+
             self.update_pics(counted_image)
+            if DISPLAY_EXTERNAL_IMAGE:
+                cv2.imshow("MainImage", counted_image)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    self.quit()
 
             # self.master.update_idletasks()
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                self.quit()
-
         # print(f"\nTotal number of cars: {car_counter}")
         # print(f"Total number of cars with stickers: {stickered_car_counter}")
-        
+
     def update_pics(self, pics):
         resized_image = cv2.resize(pics, (int(self.w / 2), int(self.h / 2)))
         rgb_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(rgb_image)
         image = ImageTk.PhotoImage(image)
-        
+
         # Update canvas with the new image
         self.canvas.create_image(0, 0, anchor=tk.NW, image=image)
         self.canvas.image = image
+
+    def update_sticker(self, pics):
+        (h, _) = pics.shape[:2]
+        # print("height:", h)
+        ratio = STICKER_MAX_SIZE / h
+
+        resized_image = cv2.resize(pics, (0, 0), fx=ratio, fy=ratio)
+        rgb_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(rgb_image)
+        image = ImageTk.PhotoImage(image)
+
+        # Update canvas with the new image
+        self.sticker.create_image(
+            self.sticker.winfo_width() / 2,
+            self.sticker.winfo_height() / 2,
+            anchor=tk.CENTER,
+            image=image,
+        )
+        self.sticker.image = image
 
     def quit(self):
         self.capture.release()
@@ -140,10 +214,12 @@ class ObjectDetectionApp:
         cv2.destroyAllWindows()
         self.master.destroy()
 
+
 def main():
     root = tk.Tk()
     app = ObjectDetectionApp(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
